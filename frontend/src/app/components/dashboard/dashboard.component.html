@@ -1,0 +1,511 @@
+<div class="app-layout">
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="brand">
+      <button class="btn btn-outline btn-back" (click)="backToCandidates.emit()" title="候補者一覧画面に戻る">
+        ← 候補者一覧に戻る
+      </button>
+      <div class="logo-icon">🤖</div>
+      <div>
+        <h1 class="logo-title">
+          SES AI Matcher
+          <span *ngIf="candidate" class="selected-candidate-badge">
+            📄 {{ candidate.displayName }}
+          </span>
+        </h1>
+        <p class="logo-sub">【Feature 1: 人材→案件探し】リアルタイム自動マッチング &amp; 提案メール自動生成</p>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <div class="connection-status" [class.connected]="systemStatus()?.gmailConnected">
+        <span class="dot"></span>
+        <span>Gmail API: {{ systemStatus()?.gmailConnected ? '接続完了' : '認証待機中' }}</span>
+      </div>
+      <button class="btn btn-primary" (click)="triggerSync()" [disabled]="syncing()">
+        <span *ngIf="!syncing()">🔄 今すぐ手動同期</span>
+        <span *ngIf="syncing()">⏳ 解析処理中...</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Banner / Notice -->
+  <div class="notice-bar" *ngIf="syncMessage()">
+    <span>{{ syncMessage() }}</span>
+    <button class="notice-close" (click)="syncMessage.set(null)">✕</button>
+  </div>
+
+  <main class="main-content">
+    <!-- Selected Candidate Banner -->
+    <div class="selected-candidate-bar" *ngIf="candidate">
+      <div class="selected-candidate-left">
+        <span class="candidate-tag">選択中の職務経歴書</span>
+        <strong class="candidate-title">📄 {{ candidate.candidateFileName }}</strong>
+        <span class="candidate-sub" *ngIf="candidate.candidateSubject">
+          （件名: {{ candidate.candidateSubject }}）
+        </span>
+      </div>
+      <div class="selected-candidate-actions">
+        <button
+          *ngIf="hasEmailId(candidate.candidateEmailId)"
+          class="btn btn-sm btn-gmail-candidate"
+          (click)="openOriginalEmail(candidate.candidateEmailId, '人材メール')">
+          📄 この候補者の元メールを開く
+        </button>
+        <button class="btn btn-sm btn-outline" (click)="backToCandidates.emit()">
+          🔄 別の経歴書に切り替える
+        </button>
+      </div>
+    </div>
+
+    <!-- Meta Info Bar -->
+    <div class="info-card">
+      <div class="info-item">
+        <span class="info-label">👤 営業担当 (Sales Rep):</span>
+        <span class="info-val"><strong>{{ systemStatus()?.salesEmail || '未ログイン' }}</strong></span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">🔍 監視件名 (Subject):</span>
+        <span class="info-val"><code>[SES AI Matcher]人材→案件探す</code></span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">⏱️ スケジューラー:</span>
+        <span class="info-val">5分毎自動実行 (<code>&#64;Scheduled 0 */5 * * * *</code>)</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">🎯 下書き自動作成トリガー:</span>
+        <span class="info-val"><strong class="highlight-threshold">適合度 60% 以上</strong></span>
+      </div>
+    </div>
+
+    <!-- KPI Cards Grid -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">総マッチング突合数</span>
+          <span class="kpi-icon">📊</span>
+        </div>
+        <div class="kpi-val">{{ matches().length }} <span class="unit">件</span></div>
+        <div class="kpi-sub">解析済みペア履歴</div>
+      </div>
+
+      <div class="kpi-card highlight-green">
+        <div class="kpi-header">
+          <span class="kpi-title">60%以上 有望マッチング</span>
+          <span class="kpi-icon">🎯</span>
+        </div>
+        <div class="kpi-val text-green">{{ highFitCount() }} <span class="unit">件</span></div>
+        <div class="kpi-sub">案件提案の推奨水準</div>
+      </div>
+
+      <div class="kpi-card highlight-blue">
+        <div class="kpi-header">
+          <span class="kpi-title">自動生成 Gmail 下書き</span>
+          <span class="kpi-icon">✉️</span>
+        </div>
+        <div class="kpi-val text-blue">{{ draftCount() }} <span class="unit">通</span></div>
+        <div class="kpi-sub">{{ systemStatus()?.salesEmail || '営業担当' }} 宛てドラフト保存済</div>
+      </div>
+    </div>
+
+    <!-- Date Filter & Calendar Range Search Bar -->
+    <div class="date-filter-card">
+      <div class="date-quick-group">
+        <span class="date-filter-label">📅 受信日時フィルター:</span>
+        <div class="quick-btn-group">
+          <button
+            type="button"
+            class="quick-filter-btn"
+            [class.active]="dateFilterMode() === 'RECENT_WEEK'"
+            (click)="setQuickDateFilter('RECENT_WEEK')">
+            直近1週間
+          </button>
+          <button
+            type="button"
+            class="quick-filter-btn"
+            [class.active]="dateFilterMode() === 'ALL'"
+            (click)="setQuickDateFilter('ALL')">
+            全期間
+          </button>
+        </div>
+      </div>
+
+      <div class="date-range-group">
+        <label class="date-input-label">
+          <span>開始日 (From):</span>
+          <input
+            type="date"
+            class="date-input"
+            [value]="fromDateInput()"
+            (input)="fromDateInput.set($any($event.target).value)" />
+        </label>
+        <span class="date-separator">〜</span>
+        <label class="date-input-label">
+          <span>終了日 (To):</span>
+          <input
+            type="date"
+            class="date-input"
+            [value]="toDateInput()"
+            (input)="toDateInput.set($any($event.target).value)" />
+        </label>
+        <button
+          type="button"
+          class="btn btn-sm btn-primary"
+          (click)="applyDateRangeSearch()">
+          🔍 検索
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline"
+          (click)="clearDateRangeSearch()">
+          クリア
+        </button>
+      </div>
+    </div>
+
+    <!-- Table Filtering Toolbar -->
+    <div class="toolbar">
+      <div class="filter-group">
+        <label class="checkbox-container">
+          <input 
+            type="checkbox" 
+            [checked]="filterOnly60Plus()" 
+            (change)="filterOnly60Plus.set(!filterOnly60Plus())" 
+          />
+          <span class="checkbox-label"><strong>適合度 60% 以上のみ表示</strong>（提案メール作成対象）</span>
+        </label>
+        <span class="active-filter-badge" *ngIf="dateFilterMode() === 'RECENT_WEEK'">
+          📌 表示中: 最新案件から直近1週間以内 ({{ filteredMatches().length }} 件)
+        </span>
+        <span class="active-filter-badge" *ngIf="dateFilterMode() === 'ALL'">
+          📌 表示中: 全期間 ({{ filteredMatches().length }} 件)
+        </span>
+        <span class="active-filter-badge custom" *ngIf="dateFilterMode() === 'CUSTOM'">
+          📌 期間指定: {{ appliedFromDate() || '指定なし' }} 〜 {{ appliedToDate() || '指定なし' }} ({{ filteredMatches().length }} 件)
+        </span>
+      </div>
+
+      <div class="search-group">
+        <input 
+          type="text" 
+          placeholder="候補者名、案件名、スキルで絞り込み..." 
+          class="search-input"
+          [value]="searchQuery()"
+          (input)="searchQuery.set($any($event.target).value)"
+        />
+        <button class="btn btn-outline" (click)="refreshData()">🔄 更新</button>
+      </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="card table-card">
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 110px;">適合度</th>
+              <th style="width: 220px;">候補者・経歴書 (Tika抽出)</th>
+              <th style="width: 260px;">対象案件 (Sales Inbox)</th>
+              <th>AI 適合理由 &amp; 条件判定 (Tier 1〜4)</th>
+              <th style="width: 140px;">Gmail 下書き</th>
+              <th style="width: 160px; text-align: center;">アクション</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              *ngFor="let m of filteredMatches()"
+              [class.row-highlight]="m.fitRate >= 60 && !isTier1Ng(m)"
+              [class.row-tier1-ng]="isTier1Ng(m)">
+              <!-- Fit Rate Gauge -->
+              <td>
+                <div class="fit-cell">
+                  <div
+                    class="fit-score"
+                    [ngClass]="isTier1Ng(m) ? 'score-tier1-ng' : (m.fitRate >= 60 ? 'score-high' : 'score-low')">
+                    {{ m.fitRate }}%
+                  </div>
+                  <div class="progress-bar">
+                    <div
+                      class="progress-fill"
+                      [style.width.%]="m.fitRate"
+                      [ngClass]="isTier1Ng(m) ? 'fill-red' : (m.fitRate >= 60 ? 'fill-green' : 'fill-gray')">
+                    </div>
+                  </div>
+                  <span *ngIf="isTier1Ng(m)" class="tier1-ng-mini-label">Tier1 足切り</span>
+                </div>
+              </td>
+
+              <!-- Candidate Info -->
+              <td>
+                <div class="candidate-box">
+                  <div class="filename">📄 {{ m.candidateFileName }}</div>
+                  <div class="subject-hint" title="{{ m.candidateSubject }}">
+                    {{ m.candidateSubject }}
+                  </div>
+                </div>
+              </td>
+
+              <!-- Project Info -->
+              <td>
+                <div class="project-box">
+                  <div class="project-title" title="{{ m.projectSubject }}">{{ m.projectSubject }}</div>
+                  <div class="project-received-at">
+                    🕒 受信: {{ formatReceivedAt(m) }}
+                  </div>
+                </div>
+              </td>
+
+              <!-- Fit Reason & Tier 1~4 Condition Badges (Compact Badge-Only View) -->
+              <td>
+                <div class="condition-cell-compact">
+                  <div
+                    class="condition-badges-row clickable-badges"
+                    (click)="openConditionDetail(m)"
+                    title="クリックして条件判定・AI適合理由の詳細を表示">
+                    <!-- 合っていない／足切り（赤色系） -->
+                    <ng-container *ngIf="isTier1Ng(m)">
+                      <span
+                        *ngFor="let badge of getTier1NgBadges(m)"
+                        class="cond-badge cond-badge-tier1-ng">
+                        [{{ badge }}]
+                      </span>
+                    </ng-container>
+
+                    <!-- 合っている条件（緑色系: Tier 1 必須条件） -->
+                    <ng-container *ngIf="!isTier1Ng(m)">
+                      <span
+                        *ngFor="let okBadge of getTier1OkBadges(m)"
+                        class="cond-badge cond-badge-tier1-ok">
+                        [{{ okBadge }}]
+                      </span>
+                    </ng-container>
+
+                    <!-- 合っている条件（緑色系: Tier 2 参画時期・勤務形態） -->
+                    <span
+                      *ngFor="let wb of getWorkConditionBadges(m)"
+                      class="cond-badge cond-badge-tier1-ok">
+                      [{{ wb }}]
+                    </span>
+
+                    <!-- 合っている条件（緑色系: Tier 3 単価・商流） -->
+                    <span
+                      *ngFor="let cb of getCommercialConditionBadges(m)"
+                      class="cond-badge cond-badge-tier1-ok">
+                      [{{ cb }}]
+                    </span>
+
+                    <!-- 注意・懸念点（黄色/オレンジ系） -->
+                    <span
+                      *ngFor="let warn of getWarningBadges(m)"
+                      class="cond-badge cond-badge-warning">
+                      [{{ warn }}]
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    class="btn-condition-detail"
+                    (click)="openConditionDetail(m)">
+                    🔍 詳細を見る
+                  </button>
+                </div>
+              </td>
+
+              <!-- Draft Status -->
+              <td>
+                <span *ngIf="m.draftCreated" class="status-badge badge-success">
+                  ✅ 下書き作成済
+                </span>
+                <span *ngIf="!m.draftCreated && isTier1Ng(m)" class="status-badge badge-ng">
+                  ⛔ 足切り対象外
+                </span>
+                <span *ngIf="!m.draftCreated && !isTier1Ng(m)" class="status-badge badge-neutral">
+                  ログ保存のみ
+                </span>
+              </td>
+
+              <!-- Actions -->
+              <td style="text-align: center;">
+                <div class="action-btn-group">
+                  <button 
+                    *ngIf="m.proposalDraft" 
+                    class="btn btn-sm btn-action" 
+                    (click)="viewProposal(m)">
+                    📝 提案書確認
+                  </button>
+                  <button 
+                    class="btn btn-sm btn-gmail-project"
+                    [disabled]="!hasEmailId(m.projectEmailId)"
+                    [title]="hasEmailId(m.projectEmailId) ? '案件の元メールをGmailで開く' : '案件メールIDが未登録です'"
+                    (click)="openOriginalEmail(m.projectEmailId, '案件メール')">
+                    📩 案件メール
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <tr *ngIf="filteredMatches().length === 0 && !loading()">
+              <td colspan="6" class="empty-cell">
+                <div class="empty-state">
+                  <span class="empty-icon">📭</span>
+                  <p>表示条件に一致するマッチングデータがありません。</p>
+                  <small>上部の「今すぐ手動同期」を押すか、Gmailの受信トレイをご確認ください。</small>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Condition & AI Fit Reason Detail Modal Dialog -->
+  <div class="modal-backdrop" *ngIf="selectedConditionRecord() as condRec" (click)="closeConditionModal()">
+    <div class="modal-card condition-modal-card" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">🔍 AI 条件判定 (Tier 1〜4) &amp; 適合理由詳細</h2>
+          <p class="modal-sub">
+            候補: <strong>{{ condRec.candidateFileName }}</strong> |
+            案件: <strong>{{ condRec.projectSubject }}</strong>
+          </p>
+        </div>
+        <button class="modal-close" (click)="closeConditionModal()" title="閉じる">✕</button>
+      </div>
+
+      <div class="modal-body condition-modal-body">
+        <!-- Section 1: Tier 1 ~ Tier 3 Structured Condition Evaluation -->
+        <div class="detail-section">
+          <h3 class="detail-section-title">① Tier 1〜3 条件判定結果（合致項目 / NG・懸念項目）</h3>
+
+          <div class="tier-grid">
+            <!-- Tier 1 Card -->
+            <div class="tier-detail-card" [class.tier-card-ng]="isTier1Ng(condRec)" [class.tier-card-ok]="!isTier1Ng(condRec)">
+              <div class="tier-card-header">
+                <span class="tier-label">Tier 1: 絶対足切り条件（国籍・日本語 / 年齢 / 経験年数）</span>
+                <span *ngIf="!isTier1Ng(condRec)" class="tier-status-pill pill-ok">✅ クリア</span>
+                <span *ngIf="isTier1Ng(condRec)" class="tier-status-pill pill-ng">❌ 足切り NG</span>
+              </div>
+              <div class="tier-card-badges">
+                <ng-container *ngIf="!isTier1Ng(condRec)">
+                  <span *ngFor="let b of getTier1OkBadges(condRec)" class="cond-badge cond-badge-tier1-ok">[{{ b }}]</span>
+                </ng-container>
+                <ng-container *ngIf="isTier1Ng(condRec)">
+                  <span *ngFor="let b of getTier1NgBadges(condRec)" class="cond-badge cond-badge-tier1-ng">[{{ b }}]</span>
+                </ng-container>
+              </div>
+              <div class="tier-card-desc">
+                {{ condRec.conditionCheckResult?.tier1Details || '判定情報なし' }}
+              </div>
+            </div>
+
+            <!-- Tier 2 Card -->
+            <div class="tier-detail-card">
+              <div class="tier-card-header">
+                <span class="tier-label">Tier 2: 稼働・勤務条件（参画時期 / 勤務形態 / 勤務地）</span>
+                <span class="tier-status-pill pill-ok">📋 稼働条件</span>
+              </div>
+              <div class="tier-card-badges">
+                <span *ngFor="let wb of getWorkConditionBadges(condRec)" class="cond-badge cond-badge-tier1-ok">[{{ wb }}]</span>
+              </div>
+              <div class="tier-card-desc">
+                {{ condRec.conditionCheckResult?.workCondition || '即日〜応相談 / ハイブリッド' }}
+              </div>
+            </div>
+
+            <!-- Tier 3 Card -->
+            <div class="tier-detail-card">
+              <div class="tier-card-header">
+                <span class="tier-label">Tier 3: 商業条件（単価・予算レンジ / 商流制限 / 面談回数）</span>
+                <span class="tier-status-pill pill-ok">💼 商業条件</span>
+              </div>
+              <div class="tier-card-badges">
+                <span *ngFor="let cb of getCommercialConditionBadges(condRec)" class="cond-badge cond-badge-tier1-ok">[{{ cb }}]</span>
+              </div>
+              <div class="tier-card-desc">
+                {{ condRec.conditionCheckResult?.commercialCondition || '単価スキル見合い / プロパー・BP可' }}
+              </div>
+            </div>
+
+            <!-- NG / Warnings Card -->
+            <div class="tier-detail-card" [class.tier-card-warn]="getWarningBadges(condRec).length > 0">
+              <div class="tier-card-header">
+                <span class="tier-label">NG / 懸念・確認事項タグ</span>
+                <span *ngIf="getWarningBadges(condRec).length === 0 && !isTier1Ng(condRec)" class="tier-status-pill pill-ok">懸念なし</span>
+                <span *ngIf="getWarningBadges(condRec).length > 0" class="tier-status-pill pill-warn">⚠️ 要確認あり</span>
+                <span *ngIf="isTier1Ng(condRec)" class="tier-status-pill pill-ng">❌ 足切り</span>
+              </div>
+              <div class="tier-card-badges">
+                <span *ngFor="let ng of getTier1NgBadges(condRec)" class="cond-badge cond-badge-tier1-ng">[{{ ng }}]</span>
+                <span *ngFor="let warn of getWarningBadges(condRec)" class="cond-badge cond-badge-warning">[{{ warn }}]</span>
+                <span *ngIf="getWarningBadges(condRec).length === 0 && !isTier1Ng(condRec)" class="no-concern-text">
+                  ✅ 特筆すべきNG・懸念事項はありません
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Tier 4 Full AI Skill Fit Reason -->
+        <div class="detail-section">
+          <div class="detail-section-header-row">
+            <h3 class="detail-section-title">② AI によるスキル一致度・適合理由の全文（Tier 4: 言語・FW・工程・ドメイン）</h3>
+            <span
+              class="detail-fit-score-badge"
+              [ngClass]="isTier1Ng(condRec) ? 'score-badge-ng' : (condRec.fitRate >= 60 ? 'score-badge-high' : 'score-badge-low')">
+              総合適合度: {{ condRec.fitRate }}%
+            </span>
+          </div>
+
+          <div class="full-reason-box" [class.full-reason-ng]="isTier1Ng(condRec)">
+            {{ condRec.fitReason }}
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button
+          *ngIf="condRec.proposalDraft"
+          type="button"
+          class="btn btn-action"
+          (click)="closeConditionModal(); viewProposal(condRec)">
+          📝 提案書下書きを確認
+        </button>
+        <button type="button" class="btn btn-secondary" (click)="closeConditionModal()">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Proposal Draft Modal Dialog -->
+  <div class="modal-backdrop" *ngIf="selectedRecord()" (click)="closeModal()">
+    <div class="modal-card" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">AI自動生成 提案メール文面</h2>
+          <p class="modal-sub">適合度: <strong class="text-green">{{ selectedRecord()?.fitRate }}%</strong> | 候補: {{ selectedRecord()?.candidateFileName }}</p>
+        </div>
+        <button class="modal-close" (click)="closeModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="meta-preview">
+          <div><strong>宛先 (To):</strong> {{ systemStatus()?.salesEmail }} (営業担当レビュー用)</div>
+          <div><strong>案件名:</strong> {{ selectedRecord()?.projectSubject }}</div>
+        </div>
+
+        <label class="textarea-label">メール下書き本文 (Gmail Draft Content):</label>
+        <textarea 
+          class="draft-textarea" 
+          rows="14" 
+          readonly>{{ selectedRecord()?.proposalDraft }}</textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-success" (click)="copyDraft(selectedRecord()!.proposalDraft)">
+          📋 文面をコピー
+        </button>
+        <button class="btn btn-secondary" (click)="closeModal()">閉じる</button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,199 @@
+<div class="candidate-layout">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <button class="btn btn-outline btn-back" (click)="backToMenu.emit()" title="トップメニューに戻る">
+        ← メニューに戻る
+      </button>
+      <div class="logo-icon">🤖</div>
+      <div>
+        <h1 class="logo-title">SES AI Matcher — 候補者（職務経歴書）一覧</h1>
+        <p class="logo-sub">案件マッチング結果を確認する候補者（職務経歴書）を選択してください</p>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="connection-status" [class.connected]="systemStatus()?.gmailConnected">
+        <span class="dot"></span>
+        <span>Gmail API: {{ systemStatus()?.gmailConnected ? '接続完了' : '認証待機中' }}</span>
+      </div>
+      <button class="btn btn-outline" (click)="loadCandidates()" [disabled]="loading()">
+        🔄 一覧更新
+      </button>
+      <button class="btn btn-primary" (click)="triggerSync()" [disabled]="syncing()">
+        <span *ngIf="!syncing()">⚡ 今すぐ手動同期</span>
+        <span *ngIf="syncing()">⏳ 解析処理中...</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Sync Notice Banner -->
+  <div class="notice-bar" *ngIf="syncMessage()">
+    <span>{{ syncMessage() }}</span>
+    <button class="notice-close" (click)="syncMessage.set(null)">✕</button>
+  </div>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">📂 登録済み候補者・職務経歴書 ({{ candidates().length }} 名)</h2>
+        <p class="section-desc">
+          各カードで「🟢 案件探し中」と「🔴 現場決定済」を切り替えられます。「🔴 現場決定済」に設定すると自動マッチングが停止します。
+        </p>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading-box" *ngIf="loading()">
+      <span>⏳ 候補者一覧を読み込み中...</span>
+    </div>
+
+    <!-- Candidate Cards Grid -->
+    <div class="candidate-grid" *ngIf="!loading() && candidates().length > 0">
+      <div
+        class="candidate-card"
+        *ngFor="let c of candidates()"
+        [class.assigned-card]="c.assigned"
+        (click)="onSelectCandidate(c)">
+        <div class="card-top">
+          <div class="file-icon" [class.assigned-icon]="c.assigned">📄</div>
+          <div class="candidate-info">
+            <h3 class="candidate-name">{{ c.displayName }}</h3>
+            <div class="candidate-filename">{{ c.candidateFileName }}</div>
+          </div>
+          <div class="max-fit-badge" [class.high]="!c.assigned && c.maxFitRate >= 60">
+            最高 {{ c.maxFitRate }}%
+          </div>
+        </div>
+
+        <!-- Status Toggle Bar: 🟢 案件探し中 / 🔴 現場決定済 -->
+        <div class="status-toggle-box" (click)="$event.stopPropagation()">
+          <span class="status-toggle-label">稼働ステータス:</span>
+          <div class="status-toggle-group">
+            <button
+              type="button"
+              class="status-toggle-btn searching"
+              [class.active]="!c.assigned"
+              (click)="setCandidateStatus($event, c, 'SEARCHING')">
+              🟢 案件探し中
+            </button>
+            <button
+              type="button"
+              class="status-toggle-btn assigned"
+              [class.active]="c.assigned"
+              (click)="setCandidateStatus($event, c, 'ASSIGNED')">
+              🔴 現場決定済
+            </button>
+          </div>
+        </div>
+
+        <div class="subject-row" [title]="c.candidateSubject">
+          <span class="subject-label">📩 受信件名:</span>
+          <span class="subject-text">{{ c.candidateSubject }}</span>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-item">
+            <span class="stat-label">突合案件数</span>
+            <span class="stat-val">{{ c.totalMatches }} <small>件</small></span>
+          </div>
+          <div class="stat-item" [class.highlight-green]="!c.assigned">
+            <span class="stat-label">60%以上有望</span>
+            <span class="stat-val" [class.text-green]="!c.assigned">{{ c.highFitMatches }} <small>件</small></span>
+          </div>
+          <div class="stat-item" [class.highlight-blue]="!c.assigned">
+            <span class="stat-label">下書き作成済</span>
+            <span class="stat-val" [class.text-blue]="!c.assigned">{{ c.draftsCreated }} <small>通</small></span>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <button
+            type="button"
+            class="btn-select-candidate"
+            [disabled]="c.assigned"
+            (click)="onSelectCandidate(c); $event.stopPropagation()">
+            <ng-container *ngIf="!c.assigned">
+              <span>{{ c.displayName }} の案件マッチングを見る</span>
+              <span class="arrow">→</span>
+            </ng-container>
+            <ng-container *ngIf="c.assigned">
+              <span>現場決定済（マッチング停止中）</span>
+            </ng-container>
+          </button>
+
+          <div class="mail-actions-row">
+            <button
+              type="button"
+              class="btn-open-mail"
+              [disabled]="!c.candidateEmailId"
+              title="候補者の元メールをGmailで開く"
+              (click)="openCandidateEmail($event, c.candidateEmailId)">
+              📄 人材メールを開く
+            </button>
+
+            <button
+              type="button"
+              class="btn-delete-mail"
+              title="この人材メールをGmailのゴミ箱へ移動し、一覧から削除する"
+              (click)="promptDeleteCandidate($event, c)">
+              🗑️ 人材メールを削除
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div class="empty-card" *ngIf="!loading() && candidates().length === 0">
+      <div class="empty-icon">📭</div>
+      <h3>登録されている職務経歴書がありません</h3>
+      <p>右上の「⚡ 今すぐ手動同期」ボタンを押して、Gmail から候補者の職務経歴書を取得してください。</p>
+      <button class="btn btn-primary" (click)="triggerSync()" [disabled]="syncing()">
+        ⚡ 今すぐ手動同期を実行
+      </button>
+    </div>
+  </main>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-backdrop" *ngIf="candidateToDelete()" (click)="cancelDelete()">
+    <div class="modal-card" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <span class="modal-warning-icon">⚠️</span>
+          <h2 class="modal-title">人材メールの削除確認</h2>
+        </div>
+        <button class="modal-close" (click)="cancelDelete()" [disabled]="deleting()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="delete-target-info">
+          <strong>対象候補者:</strong> 📄 {{ candidateToDelete()?.displayName }}
+          <span class="delete-target-file">({{ candidateToDelete()?.candidateFileName }})</span>
+        </div>
+        <p class="modal-message">
+          この操作を行うと、該当する人材メールが Gmail のゴミ箱へ移動し、候補者一覧からも削除されます。本当に削除してもよろしいですか？
+        </p>
+      </div>
+
+      <div class="modal-footer">
+        <button
+          type="button"
+          class="btn btn-cancel"
+          [disabled]="deleting()"
+          (click)="cancelDelete()">
+          キャンセル
+        </button>
+        <button
+          type="button"
+          class="btn btn-danger"
+          [disabled]="deleting()"
+          (click)="confirmDeleteCandidate()">
+          <span *ngIf="!deleting()">削除する</span>
+          <span *ngIf="deleting()">削除中...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

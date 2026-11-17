@@ -1,0 +1,115 @@
+server:
+  port: 8080
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        secure: false  # ローカル開発(HTTP)用
+        same-site: lax
+
+spring:
+  application:
+    name: ses-ai-matcher
+  config:
+    import:
+      - "optional:file:.env[.properties]"
+      - "optional:file:../.env[.properties]"
+  datasource:
+    url: jdbc:h2:mem:sesmatcher;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driverClassName: org.h2.Driver
+    username: sa
+    password: 
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # =========================================================================
+  # Google OAuth2 Login 設定 (Sign in with Google)
+  # Google Cloud Console (APIs & Services > Credentials > OAuth 2.0 Client IDs)
+  # で発行した Web Application 用の Client ID / Client Secret を環境変数または .env で設定してください。
+  # 承認済みのリダイレクト URI: http://localhost:8080/login/oauth2/code/google
+  # =========================================================================
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: "${GOOGLE_CLIENT_ID}"
+            client-secret: "${GOOGLE_CLIENT_SECRET}"
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope:
+              - openid
+              - profile
+              - email
+              - https://www.googleapis.com/auth/gmail.readonly
+              - https://www.googleapis.com/auth/gmail.compose
+              - https://www.googleapis.com/auth/gmail.modify
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent
+
+ses:
+  security:
+    allowed-domain: "${SES_ALLOWED_DOMAIN:@voyager-inc.com}"
+  frontend:
+    url: "http://localhost:4200"
+  matcher:
+    threshold: 60
+    subject-filter: "[SES AI Matcher]人材→案件探す"
+  filter:
+    min-project-structural-indicators: 3
+    min-project-body-length: 80
+    exclude-senders:
+      - "noreply"
+      - "no-reply"
+      - "notifications@"
+      - "calendar-notification"
+      - "mailer-daemon"
+      - "github.com"
+      - "gitlab.com"
+      - "microsoft.com"
+      - "udemy.com"
+      - "coursera.org"
+      - "connpass.com"
+      - "techplay.jp"
+    exclude-subject-keywords:
+      - "招待:"
+      - "招待 - 更新:"
+      - "承諾:"
+      - "辞退:"
+      - "仮承諾:"
+      - "invitation:"
+      - "accepted:"
+      - "declined:"
+      - "tentative:"
+      - "google calendar"
+      - "zoom"
+      - "meeting notes"
+      - "メモ: 「"
+      - "議事録"
+      - "copilot"
+      - "course is ready"
+      - "受講"
+      - "セミナー"
+      - "ウェビナー"
+      - "ニュースレター"
+      - "メルマガ"
+      - "【提案下書き】"
+  google:
+    credentials-file-path: "credentials/google-credentials.json"
+    tokens-directory-path: "tokens"
+    application-name: "SES-AI-Matcher"
+  gemini:
+    api-key: "${GEMINI_API_KEY:}"
+    model: "gemini-1.5-flash"
+    api-url: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+
+logging:
+  level:
+    com.voyager.sesmatcher: INFO
